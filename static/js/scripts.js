@@ -1,8 +1,6 @@
 let username;
 const ws = new WebSocket('ws://localhost:8080/ws');
 
-console.log("scripts.js loaded successfully");
-
 document.addEventListener('DOMContentLoaded', function() {
     const chat = document.getElementById('chat');
     const messageInput = document.getElementById('messageInput');
@@ -10,6 +8,7 @@ document.addEventListener('DOMContentLoaded', function() {
     const usernameInput = document.getElementById('usernameInput');
     const joinChatButton = document.getElementById('joinChatButton');
     const fontSelect = document.getElementById('fontSelect');
+    const calcInput = document.getElementById('calcInput'); // Calculator input
     let selectedFont = fontSelect.value;
 
     ws.onopen = function() {
@@ -19,7 +18,9 @@ document.addEventListener('DOMContentLoaded', function() {
     ws.onmessage = function(event) {
         const message = JSON.parse(event.data);
 
-        if (message.filename) {
+        if (message.type === "calculation_result") {
+            displayCalculationResult(message.result);
+        } else if (message.type === "file_result") {
             displayModifiedFile(message);
         } else {
             displayMessage(message.username, message.message);
@@ -61,7 +62,7 @@ function sendMessage() {
     }
     const message = {
         username: username,
-        message: messageInput.value
+        message: messageInput.value,
     };
     ws.send(JSON.stringify(message));
     messageInput.value = '';
@@ -87,7 +88,7 @@ function uploadFile() {
     }
 
     if (file.size < 10240) {
-        alert("Please upload a .txt file larger than 10KB.");
+        alert("Please upload a .txt file equal to or larger than 10KB.");
         return;
     }
 
@@ -113,8 +114,24 @@ function uploadFile() {
     reader.readAsArrayBuffer(file);
 }
 
-// Explicitly attach the function to the global window object
-window.uploadFile = uploadFile;
+function sendCalculation() {
+    const calcInput = document.getElementById('calcInput');
+    const expression = calcInput.value.trim();
+
+    if (!expression) {
+        alert("Please enter a calculation.");
+        return;
+    }
+
+    const calcMessage = {
+        message: "calculate", // Label for the server
+        calculation: expression,
+    };
+
+    console.log("Sending calculation request:", calcMessage);
+    ws.send(JSON.stringify(calcMessage));
+    calcInput.value = ''; // Clear the input field
+}
 
 function displayMessage(username, message) {
     const chat = document.getElementById('chat');
@@ -141,4 +158,10 @@ function displayModifiedFile(data) {
     chat.scrollTop = chat.scrollHeight;
 }
 
-
+function displayCalculationResult(result) {
+    const chat = document.getElementById('chat');
+    const resultElement = document.createElement('div');
+    resultElement.innerHTML = `<strong>Calculator Result:</strong> ${result}`;
+    chat.appendChild(resultElement);
+    chat.scrollTop = chat.scrollHeight;
+}

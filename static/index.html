@@ -10,7 +10,7 @@
     <div id="chat-container">
         <div id="chat"></div>
         <div id="messageInputContainer">
-            <textarea id="messageInput" placeholder="Welcome to Go-Chat"></textarea>
+            <textarea id="messageInput" placeholder="Welcome, type to chat"></textarea>
             <select id="fontSelect">
                 <option value="Arial">Arial</option>
                 <option value="Courier New">Courier New</option>
@@ -20,8 +20,17 @@
             </select>
             <button id="sendButton" onclick="sendMessage()">Send</button>
         </div>
-        <!-- New File Upload Section -->
+
+        <!-- Calculation Section -->
+        <div id="calculationContainer">
+            <h3>Calculator</h3>
+            <input type="text" id="calcInput" placeholder="Enter calculation (e.g., 5 + 3)">
+            <button onclick="sendCalculation()">Calculate</button>
+        </div>
+
+        <!-- File Upload Section -->
         <div id="fileUploadContainer">
+            <h3>File Upload</h3>
             <input type="file" id="fileInput" accept=".txt">
             <button onclick="uploadFile()">Upload File</button>
         </div>
