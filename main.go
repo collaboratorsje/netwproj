@@ -1,10 +1,13 @@
 package main
 
 import (
+	"encoding/json"
 	"fmt"
-	"net/http"
 	"html/template"
 	"log"
+	"net/http"
+	"os"
+
 	"github.com/gorilla/websocket"
 )
 
@@ -23,12 +26,16 @@ type Message struct {
 }
 
 func main() {
+	// Serve the main page
 	http.HandleFunc("/", serveHome)
 	http.HandleFunc("/ws", handleConnections)
 	http.Handle("/static/", http.StripPrefix("/static/", http.FileServer(http.Dir("static"))))
+	http.Handle("/files/", http.StripPrefix("/files/", http.FileServer(http.Dir("server_files"))))
 
+	// Start a goroutine to handle chat messages
 	go handleMessages()
 
+	// Start the HTTP server
 	log.Println("Server started on :8080")
 	err := http.ListenAndServe(":8080", nil)
 	if err != nil {
@@ -59,21 +66,96 @@ func handleConnections(w http.ResponseWriter, r *http.Request) {
 	defer delete(clients, conn)
 
 	for {
-		var msg Message
-		err := conn.ReadJSON(&msg)
+		var rawMessage map[string]interface{}
+		err := conn.ReadJSON(&rawMessage)
 		if err != nil {
 			log.Printf("WebSocket read error: %v", err)
 			break
 		}
 
-		if msg.Message == "joined" {
-			welcomeMsg := Message{
-				Username: "System",
-				Message:  fmt.Sprintf("Welcome %s!", msg.Username),
-			}
-			broadcast <- welcomeMsg
+		if rawMessage["message"] == "file_upload" {
+			handleFile(conn, rawMessage)
+		} else {
+			handleMessage(conn, rawMessage)
 		}
+	}
+}
 
+func handleFile(conn *websocket.Conn, rawMessage map[string]interface{}) {
+	filename := rawMessage["filename"].(string)
+	fileData := rawMessage["data"].([]interface{})
+
+	// Convert file data to []byte
+	byteData := make([]byte, len(fileData))
+	for i, v := range fileData {
+		byteData[i] = byte(v.(float64))
+	}
+
+	// Print the file content to the server console
+	log.Printf("Received file %s:\n%s", filename, string(byteData))
+
+	// Save the original file locally
+	err := os.WriteFile(fmt.Sprintf("server_files/%s", filename), byteData, 0644)
+	if err != nil {
+		log.Printf("Error saving file: %v", err)
+		return
+	}
+
+	// Append a new line to the file
+	modifiedData := append(byteData, []byte("\nThis is an added line from the server.")...)
+	modifiedFilename := "modified_" + filename
+
+	// Save the modified file locally
+	err = os.WriteFile(fmt.Sprintf("server_files/%s", modifiedFilename), modifiedData, 0644)
+	if err != nil {
+		log.Printf("Error saving modified file: %v", err)
+		return
+	}
+
+	// Create a fake download link (in a real app, serve this via HTTP)
+	downloadUrl := fmt.Sprintf("http://localhost:8080/files/%s", modifiedFilename)
+
+	// Send the modified file content and download link to the client
+	response := map[string]interface{}{
+		"filename":    modifiedFilename,
+		"content":     string(modifiedData),
+		"downloadUrl": downloadUrl,
+	}
+	err = conn.WriteJSON(response)
+	if err != nil {
+		log.Printf("Error sending modified file to client: %v", err)
+	}
+}
+
+func handleMessage(conn *websocket.Conn, rawMessage map[string]interface{}) {
+	var msg Message
+	if err := mapToStruct(rawMessage, &msg); err != nil {
+		log.Printf("Error parsing message: %v", err)
+		return
+	}
+
+	if msg.Message == "joined" {
+		welcomeMsg := Message{
+			Username: "System",
+			Message:  fmt.Sprintf("Welcome %s!", msg.Username),
+		}
+		broadcast <- welcomeMsg
+	} else if msg.Message == fmt.Sprintf("Hello from Client %s", msg.Username) {
+		conn.WriteJSON(msg)
+		response := Message{
+			Username: "Kangaroo",
+			Message:  "Hello from Server Kangaroo",
+		}
+		conn.WriteJSON(response)
+	} else if msg.Message == fmt.Sprintf("Bye from Client %s", msg.Username) {
+		conn.WriteJSON(msg)
+		goodbyeMsg := Message{
+			Username: "Kangaroo",
+			Message:  "Goodbye! (Refresh the page to establish a new connection with the server)",
+		}
+		conn.WriteJSON(goodbyeMsg)
+		return
+	} else {
 		broadcast <- msg
 	}
 }
@@ -91,3 +173,10 @@ func handleMessages() {
 	}
 }
 
+func mapToStruct(input map[string]interface{}, output interface{}) error {
+	data, err := json.Marshal(input)
+	if err != nil {
+		return err
+	}
+	return json.Unmarshal(data, output)
+}

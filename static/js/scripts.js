@@ -1,6 +1,8 @@
 let username;
 const ws = new WebSocket('ws://localhost:8080/ws');
 
+console.log("scripts.js loaded successfully");
+
 document.addEventListener('DOMContentLoaded', function() {
     const chat = document.getElementById('chat');
     const messageInput = document.getElementById('messageInput');
@@ -16,12 +18,12 @@ document.addEventListener('DOMContentLoaded', function() {
 
     ws.onmessage = function(event) {
         const message = JSON.parse(event.data);
-        const messageElement = document.createElement('div');
-        messageElement.style.fontFamily = selectedFont;
-        messageElement.innerHTML = `<strong>${message.username}:</strong> ${message.message.replace(/\n/g, '<br>')}`;
-        chat.appendChild(messageElement);
-        chat.scrollTop = chat.scrollHeight;
-        console.log("Message received:", message);
+
+        if (message.filename) {
+            displayModifiedFile(message);
+        } else {
+            displayMessage(message.username, message.message);
+        }
     };
 
     ws.onerror = function(error) {
@@ -41,7 +43,6 @@ document.addEventListener('DOMContentLoaded', function() {
         console.log("Selected font:", selectedFont);
     });
 
-    // Handle keypress events for the textarea
     messageInput.addEventListener('keydown', function(event) {
         if (event.key === 'Enter' && !event.shiftKey) {
             event.preventDefault();
@@ -49,7 +50,6 @@ document.addEventListener('DOMContentLoaded', function() {
         }
     });
 
-    // Show modal on load
     usernameModal.style.display = 'flex';
 });
 
@@ -63,7 +63,6 @@ function sendMessage() {
         username: username,
         message: messageInput.value
     };
-    console.log("Sending message:", message);
     ws.send(JSON.stringify(message));
     messageInput.value = '';
 }
@@ -71,14 +70,75 @@ function sendMessage() {
 function setUsername(name) {
     if (name) {
         username = name;
-        const usernameModal = document.getElementById('usernameModal');
-        usernameModal.style.display = 'none';
-        console.log("Username set to:", username);
+        document.getElementById('usernameModal').style.display = 'none';
         ws.send(JSON.stringify({ username: username, message: "joined" }));
     } else {
         alert("Username cannot be empty");
     }
 }
 
+function uploadFile() {
+    const fileInput = document.getElementById('fileInput');
+    const file = fileInput.files[0];
+
+    if (!file) {
+        alert("No file selected!");
+        return;
+    }
+
+    if (file.size < 10240) {
+        alert("Please upload a .txt file larger than 10KB.");
+        return;
+    }
+
+    const reader = new FileReader();
+    reader.onload = function(event) {
+        const fileData = event.target.result;
+
+        const fileMessage = {
+            message: "file_upload",
+            filename: file.name,
+            data: Array.from(new Uint8Array(fileData))
+        };
+
+        console.log("Sending file message:", fileMessage);
+        ws.send(JSON.stringify(fileMessage));
+    };
+
+    reader.onerror = function(error) {
+        console.error("Error reading file:", error);
+        alert("An error occurred while reading the file.");
+    };
+
+    reader.readAsArrayBuffer(file);
+}
+
+// Explicitly attach the function to the global window object
+window.uploadFile = uploadFile;
+
+function displayMessage(username, message) {
+    const chat = document.getElementById('chat');
+    const messageElement = document.createElement('div');
+    messageElement.style.fontFamily = document.getElementById('fontSelect').value;
+    messageElement.innerHTML = `<strong>${username}:</strong> ${message.replace(/\n/g, '<br>')}`;
+    chat.appendChild(messageElement);
+    chat.scrollTop = chat.scrollHeight;
+}
+
+function displayModifiedFile(data) {
+    const chat = document.getElementById('chat');
+
+    const fileContent = document.createElement('div');
+    fileContent.innerHTML = `<strong>Modified File Content:</strong><br>${data.content.replace(/\n/g, '<br>')}`;
+    chat.appendChild(fileContent);
+
+    const downloadLink = document.createElement('a');
+    downloadLink.href = data.downloadUrl;
+    downloadLink.textContent = "Download Modified File";
+    downloadLink.download = data.filename;
+    chat.appendChild(downloadLink);
+
+    chat.scrollTop = chat.scrollHeight;
+}
 
 
