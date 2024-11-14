@@ -8,9 +8,9 @@ import (
 	"math"
 	"net/http"
 	"os"
-	"strconv"
 	"strings"
 
+	"github.com/Knetic/govaluate"
 	"github.com/gorilla/websocket"
 )
 
@@ -127,13 +127,14 @@ func handleCalculation(conn *websocket.Conn, rawMessage map[string]interface{}) 
 		return
 	}
 
+	// Evaluate the expression
 	result, err := evaluateExpression(calculation)
 
 	var response Message
 	if err != nil {
 		response = Message{
 			Username: "Kangaroo",
-			Message:  fmt.Sprintf("Invalid calculation: %s", err.Error()),
+			Message:  fmt.Sprintf("Invalid calculation: %s. Supported functions: sin, cos, log, etc.", err.Error()),
 		}
 	} else {
 		response = Message{
@@ -146,38 +147,63 @@ func handleCalculation(conn *websocket.Conn, rawMessage map[string]interface{}) 
 }
 
 func evaluateExpression(expr string) (float64, error) {
-	parts := strings.Fields(expr)
-	if len(parts) != 3 {
-		return 0, fmt.Errorf("must be in the format 'a + b'")
+	normalizedExpr := normalizeExpression(expr)
+
+	// Register custom functions
+	functions := map[string]govaluate.ExpressionFunction{
+		"log": func(args ...interface{}) (interface{}, error) {
+			if len(args) != 1 {
+				return nil, fmt.Errorf("log expects one argument")
+			}
+			value, ok := args[0].(float64)
+			if !ok {
+				return nil, fmt.Errorf("invalid argument for log")
+			}
+			return math.Log(value), nil
+		},
+		"log10": func(args ...interface{}) (interface{}, error) {
+			if len(args) != 1 {
+				return nil, fmt.Errorf("log10 expects one argument")
+			}
+			value, ok := args[0].(float64)
+			if !ok {
+				return nil, fmt.Errorf("invalid argument for log10")
+			}
+			return math.Log10(value), nil
+		},
+		"sin": func(args ...interface{}) (interface{}, error) {
+			value, ok := args[0].(float64)
+			if !ok {
+				return nil, fmt.Errorf("invalid argument for sin")
+			}
+			return math.Sin(value), nil
+		},
+		"cos": func(args ...interface{}) (interface{}, error) {
+			value, ok := args[0].(float64)
+			if !ok {
+				return nil, fmt.Errorf("invalid argument for cos")
+			}
+			return math.Cos(value), nil
+		},
 	}
 
-	a, err := strconv.ParseFloat(parts[0], 64)
+	expression, err := govaluate.NewEvaluableExpressionWithFunctions(normalizedExpr, functions)
 	if err != nil {
-		return 0, fmt.Errorf("invalid number: %s", parts[0])
+		return 0, fmt.Errorf("invalid expression: %v", err)
 	}
 
-	b, err := strconv.ParseFloat(parts[2], 64)
+	// Evaluate the expression
+	result, err := expression.Evaluate(nil)
 	if err != nil {
-		return 0, fmt.Errorf("invalid number: %s", parts[2])
+		return 0, fmt.Errorf("evaluation error: %v", err)
 	}
 
-	switch parts[1] {
-	case "+":
-		return a + b, nil
-	case "-":
-		return a - b, nil
-	case "*":
-		return a * b, nil
-	case "/":
-		if b == 0 {
-			return 0, fmt.Errorf("division by zero")
-		}
-		return a / b, nil
-	case "^":
-		return math.Pow(a, b), nil
-	default:
-		return 0, fmt.Errorf("unsupported operator: %s", parts[1])
-	}
+	return result.(float64), nil
+}
+
+// Normalize the expression: make lowercase and handle custom operators
+func normalizeExpression(expr string) string {
+	return strings.ToLower(expr) // Normalize to lowercase for functions like Sin
 }
 
 func handleFile(conn *websocket.Conn, rawMessage map[string]interface{}) {
