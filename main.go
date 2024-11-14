@@ -20,8 +20,12 @@ var upgrader = websocket.Upgrader{
 	},
 }
 
-var clients = make(map[*websocket.Conn]bool)
+var clients = make(map[*websocket.Conn]string)        // Map client connections to room names
+var rooms = make(map[string]map[*websocket.Conn]bool) // Room name -> list of connections
+var roomPasscodes = make(map[string]string)           // Store passcodes for each room
 var broadcast = make(chan Message)
+
+const DefaultRoom = "default"
 
 type Message struct {
 	Username    string `json:"username"`
@@ -63,8 +67,20 @@ func handleConnections(w http.ResponseWriter, r *http.Request) {
 	}
 	defer conn.Close()
 
-	clients[conn] = true
-	defer delete(clients, conn)
+	// Ensure the default room exists
+	if _, exists := rooms[DefaultRoom]; !exists {
+		rooms[DefaultRoom] = make(map[*websocket.Conn]bool)
+	}
+
+	// Assign the client to the default room
+	rooms[DefaultRoom][conn] = true
+	clients[conn] = DefaultRoom
+
+	defer func() {
+		roomName := clients[conn]
+		delete(rooms[roomName], conn)
+		delete(clients, conn)
+	}()
 
 	for {
 		var rawMessage map[string]interface{}
@@ -74,18 +90,121 @@ func handleConnections(w http.ResponseWriter, r *http.Request) {
 			break
 		}
 
-		// Route message types
-		if rawMessage["message"] == "calculate" {
-			handleCalculation(conn, rawMessage)
-			continue
+		log.Printf("Received raw message: %v", rawMessage)
+
+		// Handle message types
+		if action, ok := rawMessage["action"].(string); ok {
+			switch action {
+			case "chat":
+				handleChatMessage(conn, rawMessage)
+			case "calculate":
+				handleCalculation(conn, rawMessage)
+			case "file_upload":
+				handleFile(conn, rawMessage)
+			case "create_room":
+				handleCreateRoom(conn, rawMessage)
+			case "join_room":
+				handleJoinRoom(conn, rawMessage)
+			case "leave_room":
+				handleLeaveRoom(conn) // New case for leaving a room
+			default:
+				log.Printf("Unknown action: %s", action)
+			}
+		} else {
+			// Legacy messages without "action"
+			handleLegacyMessages(conn, rawMessage)
+		}
+	}
+}
+
+func handleLegacyMessages(conn *websocket.Conn, rawMessage map[string]interface{}) {
+	if rawMessage["message"] == "joined" {
+		msg := Message{
+			Username: rawMessage["username"].(string),
+			Message:  "joined",
+		}
+		broadcast <- msg
+	} else if rawMessage["message"] == "calculate" {
+		handleCalculation(conn, rawMessage)
+	} else {
+		log.Printf("Invalid legacy message: %v", rawMessage)
+	}
+}
+
+func handleCreateRoom(conn *websocket.Conn, rawMessage map[string]interface{}) {
+	roomName := rawMessage["roomName"].(string)
+	passcode := rawMessage["passcode"].(string)
+
+	if _, exists := rooms[roomName]; exists {
+		response := Message{
+			Username: "Kangaroo",
+			Message:  "Room already exists.",
+		}
+		conn.WriteJSON(response)
+		return
+	}
+
+	rooms[roomName] = make(map[*websocket.Conn]bool)
+	roomPasscodes[roomName] = passcode
+	response := Message{
+		Username: "Kangaroo",
+		Message:  fmt.Sprintf(`Room "%s" created with Passcode "%s".`, roomName, passcode),
+	}
+	conn.WriteJSON(response)
+}
+
+func handleJoinRoom(conn *websocket.Conn, rawMessage map[string]interface{}) {
+	roomName := rawMessage["roomName"].(string)
+	passcode := rawMessage["passcode"].(string)
+
+	if roomClients, exists := rooms[roomName]; exists {
+		if roomPasscodes[roomName] == passcode {
+			oldRoom := clients[conn]
+			delete(rooms[oldRoom], conn)
+
+			roomClients[conn] = true
+			clients[conn] = roomName
+			response := Message{
+				Username: "Kangaroo",
+				Message:  fmt.Sprintf(`Joined room: "%s".`, roomName),
+			}
+			conn.WriteJSON(response)
+		} else {
+			response := Message{
+				Username: "Kangaroo",
+				Message:  "Invalid passcode.",
+			}
+			conn.WriteJSON(response)
+		}
+	} else {
+		response := Message{
+			Username: "Kangaroo",
+			Message:  "Invalid room name or passcode.",
+		}
+		conn.WriteJSON(response)
+	}
+}
+
+func handleLeaveRoom(conn *websocket.Conn) {
+	currentRoom := clients[conn]
+
+	if _, exists := rooms[currentRoom]; exists {
+		delete(rooms[currentRoom], conn)
+		clients[conn] = DefaultRoom
+		rooms[DefaultRoom][conn] = true
+
+		response := Message{
+			Username: "Kangaroo",
+			Message:  fmt.Sprintf(`You have left room: "%s" and joined default room.`, currentRoom),
 		}
 
-		if rawMessage["message"] == "file_upload" {
-			handleFile(conn, rawMessage)
-			continue
+		conn.WriteJSON(response)
+	} else {
+		response := Message{
+			Username: "Kangaroo",
+			Message:  "You are not currently in a valid room.",
 		}
-
-		handleChatMessage(conn, rawMessage)
+		conn.WriteJSON(response)
 	}
 }
 
@@ -112,7 +231,15 @@ func handleChatMessage(conn *websocket.Conn, rawMessage map[string]interface{}) 
 		conn.WriteJSON(goodbyeMsg)
 		return
 	} else {
-		broadcast <- msg
+		// Send the message to everyone in the client's current room
+		roomName := clients[conn]
+		for client := range rooms[roomName] {
+			if err := client.WriteJSON(msg); err != nil {
+				log.Printf("WebSocket write error: %v", err)
+				client.Close()
+				delete(rooms[roomName], client)
+			}
+		}
 	}
 }
 
@@ -210,6 +337,7 @@ func handleFile(conn *websocket.Conn, rawMessage map[string]interface{}) {
 	filename := rawMessage["filename"].(string)
 	fileData := rawMessage["data"].([]interface{})
 
+	// Convert file data to []byte
 	byteData := make([]byte, len(fileData))
 	for i, v := range fileData {
 		byteData[i] = byte(v.(float64))
@@ -224,23 +352,28 @@ func handleFile(conn *websocket.Conn, rawMessage map[string]interface{}) {
 		return
 	}
 
+	// Append a new line to the file
 	modifiedData := append(byteData, []byte("\nThis is an added line from the server.")...)
 	modifiedFilename := "modified_" + filename
 
+	// Save the modified file locally
 	err = os.WriteFile(fmt.Sprintf("server_files/%s", modifiedFilename), modifiedData, 0644)
 	if err != nil {
 		log.Printf("Error saving modified file: %v", err)
 		return
 	}
 
+	// Provide download link for the modified file
 	downloadUrl := fmt.Sprintf("http://localhost:8080/files/%s", modifiedFilename)
 
+	// Send back modified file and download link
 	response := map[string]interface{}{
-		"type":        "file_result",
+		"type":        "file_result", // Used by frontend to display file
 		"filename":    modifiedFilename,
-		"content":     string(modifiedData),
-		"downloadUrl": downloadUrl,
+		"content":     string(modifiedData), // File content as string for display
+		"downloadUrl": downloadUrl,          // URL to download file
 	}
+
 	err = conn.WriteJSON(response)
 	if err != nil {
 		log.Printf("Error sending modified file to client: %v", err)

@@ -7,6 +7,8 @@ body {
     height: 100vh;
     margin: 0;
     flex-direction: column;
+    padding-top: 20px; /* Add equal spacing at the top */
+    padding-bottom: 20px; /* Maintain bottom spacing */
 }
 
 #chat-container {
@@ -131,7 +133,7 @@ body {
 
 /* New Styles for Calculation and File Upload Sections */
 #calculationContainer, #fileUploadContainer {
-    margin-top: 20px;
+    margin-top: 0; /* Remove any vertical margin above */
     padding: 15px;
     background-color: #f0f0f0;
     border-radius: 8px;
@@ -141,7 +143,8 @@ body {
 }
 
 #calculationContainer h3, #fileUploadContainer h3 {
-    margin-bottom: 10px;
+    margin-top: 0; 
+    margin-bottom: 10px; /* Keep uniform spacing at the bottom of section titles */
     font-size: 1.1em;
     font-weight: normal;
     color: #555;
@@ -198,4 +201,45 @@ body {
 
 #fileUploadContainer button:hover {
     background-color: #117a8b;
+}
+
+#roomControls {
+    display: flex;
+    justify-content: center; /* Center buttons */
+    margin-top: 10px; /* Add space between buttons and the above elements */
+    padding-bottom: 10px; /* Space at the bottom of the chat interface */
+}
+
+#roomControls button {
+    font-size: 16px;
+    padding: 10px 15px;
+    border-radius: 5px;
+    border: none;
+    cursor: pointer;
+    margin-right: 10px;
+    color: white;
+    min-width: 120px;
+    text-align: center;
+}
+
+/* Specific colors for each button */
+#createRoomButton {
+    background-color: #28a745; /* Green for Create */
+}
+
+#joinRoomButton {
+    background-color: #007bff; /* Blue for Join */
+}
+
+#leaveRoomButton {
+    background-color: #dc3545; /* Red for Leave */
+}
+
+/* Add hover effects for better interactivity */
+#roomControls button:hover {
+    opacity: 0.9;
+}
+
+#roomControls button:active {
+    transform: scale(0.98);
 }
